@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>A classification of the co-located interactions in art installations</title>
+
+    <script src="./vendor/d3/d3.min.js" type="text/javascript"></script>
+    <script src="./vendor/d3-save-svg/d3-save-svg.min.js"></script>
+    <script src="./vendor/dat.gui/dat.gui.min.js" type="text/javascript"></script>
+    <link href="./vendor//dat-gui-light-theme/dat-gui-light-theme.css" rel="stylesheet" type="text/css">
+
+    <style>
+        body,
+        html{
+            height: 100%;
+        }
+
+        body {
+            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+            font-size: 13px;
+            line-height: 18px;
+            margin: 0;
+        }
+
+        #vis {
+            display: flex;
+            height: 100%;
+            flex-direction: row;
+            flex-wrap: nowrap;
+            justify-content: space-around;
+            align-content: stretch;
+            align-items: center;
+        }
+
+        #graph {
+            width: 50%;
+            min-width: 500px;
+            order: 0;
+            align-self: auto;
+        }
+        #graph .work.hidden{
+            pointer-events: none;
+        }
+
+        #details {
+            order: 0;
+            width: 40%;
+            align-self: auto;
+            white-space: nowrap;
+        }
+        #details h3{
+            font-family: Georgia;
+            font-weight: normal;
+            font-size: 1.5em;
+            margin: 0;
+        }
+        #details h4{
+            margin-top: 0.5em;
+            font-weight: normal;
+            font-style: italic;
+        }
+        #details .color{
+            display: inline-block;
+            width: 1em;
+            height: 1em;
+            margin-right: 0.5em;
+            border-radius: 0.5em;
+            vertical-align: middle;
+        }
+        #details .label{
+            font-weight: bold;
+        }
+
+        #credits{
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            font-size: 0.95em;
+            font-family: Georgia;
+            padding: 1em;
+            text-align: right;
+            opacity: 0.5;
+        }
+        #credits:hover{
+            opacity: 1;
+        }
+
+        #credits a{
+            color: #222;
+            text-decoration: none;
+        }
+
+        #credits a:hover{
+            text-decoration: underline;
+        }
+
+        .dg.main{
+            min-width: 300px;
+            margin: 0;
+        }
+        .dg.main .close-button{
+            display: none;
+        }
+        .dg li:not(.folder):not(.title){
+            border-left: 3px solid #333 !important;
+        }
+        .dg li.title{
+            padding-left: 0;
+            background-image: none !important;
+        }
+        .dg li.title::before{
+            display: inline-block;
+            width: 2em;
+            content: "-";
+            text-align: center;
+        }
+        .dg ul.closed li.title::before{
+            content: "+";
+        }
+    </style>
+</head>
+<body>
+    <div id="vis">
+        <div id="graph"></div>
+        <div id="details">
+            <h3 data-info="Title"></h3>
+            <h4 data-info="Author"></h3>
+            <h4 data-info="Criteria"></h3>
+            <h4 data-info="Link"></h3>
+        </div>
+    </div>
+
+    <div id="credits">
+        Credits: <b>Oussama Mubarak</b>. January 2018.<br/><br/>
+        Created in the context of his thesis project,<br/><i>Designing and Modeling Collective Co-located Interactions for Art Installations</i><br/>conducted at <b><a href="http://cedric.cnam.fr/" target="_blank">Cédric</a></b> and <b><a href="http://www.ensadlab.fr/" target="_blank">EnsadLab</a></b>.
+    </div>
+
+    <script>
+        class Graph {
+            constructor(opt) {
+
+                this._defaults = {
+                    "width": 980,
+                    "height": 980,
+                    "innerRadius": 50,
+                    "radiusStep": 35,
+                    "radiusPad": 0,
+                    "cornerRadius": 0,
+                    "maxScaleRadius": 100,
+                    "labelOffset": 4,
+                    "padAngle": 0,
+                    "criteria": {
+                        "Scale": {
+                            "large": "#444443",
+                            "medium": "#676766",
+                            "small": "#9b9b9a"
+                        },
+                        "Interaction modality": {
+                            "direct": "#2f7275",
+                            "facilitated": "#47acb1",
+                            "ambient": "#86c8cc",
+                            "facilitated & ambient": "#c2e4e5"
+                        },
+                        "Input distribution": {
+                            "centralized": "#a04316",
+                            "partially distributed": "#f26522",
+                            "fully distributed": "#f6996d"
+                        },
+                        "Output distribution": {
+                            "centralized": "#631851",
+                            "partially distributed": "#96247a",
+                            "fully distributed": "#ba6ea7"
+                        },
+                        "Feedback attributability": {
+                            "high": "#a88722",
+                            "medium": "#ffcd34",
+                            "low": "#ffde79",
+                            "variable": "#ffeebc"
+                        },
+                        "Activity type": {
+                            "solitary": "#85161c",
+                            "collaborative": "#c9222b",
+                            "competitive": "#db6d73"
+                        },
+                        "Participation symmetry": {
+                            "symmetrical": "#1a4734",
+                            "asymmetrical": "#286c4f",
+                            "variable": "#719e8b"
+                        }
+                    }
+                };
+
+                this._opt = Object.assign({}, this._defaults, opt);
+
+                this._criteria = d3.keys(this._opt.criteria);
+                this._details = d3.select("#details").style("opacity", 0);
+
+                this._filters = {
+                    "Title": "",
+                    "Author": ""
+                };
+                this._criteria.forEach((criterion) => {
+                    this._filters[criterion] = "";
+                });
+
+                this._sorts = {};
+
+                // create the svg element
+                this._svg = d3.select("#graph").append("svg")
+                    .attr( 'preserveAspectRatio',"xMinYMin meet")
+                    .attr("viewBox", "0 0 "+ this._opt.width +" "+ this._opt.height)
+                    .attr('width', '100%')
+                    .attr('height', '100%')
+                    .append("g")
+                    .attr("transform", "translate(" + this._opt.width / 2 + "," + this._opt.height / 2 + ")");
+
+                // create the details elements
+                this._criteria.forEach((criterion, index) => {
+                    this._sorts["Sort "+ (index+1)] = "";
+
+                    var detail = this._details.select("[data-info='Criteria']").append("div")
+                        .attr("data-info", criterion);
+
+                    detail.append("span")
+                        .classed("color", true);
+
+                    detail.append("span")
+                        .classed("label", true)
+                        .text(criterion +": ");
+
+                    detail.append("span")
+                        .classed("value", true);
+                });
+            }
+
+            load(url){
+                d3.tsv(url, this.preprocessData, (error, data) => {
+                    if(error) throw error;
+
+                    this._data = data;
+
+                    this.createGUI();
+
+                    this.draw();
+
+                    // add download shortcut
+                    d3.select("body")
+                        .on("keydown", () => {
+                            if(d3.event.ctrlKey && d3.event.keyCode == 83){
+                                d3.event.preventDefault();
+
+                                d3.select('svg').each(function() {
+                                    var clone = this.cloneNode(true);
+
+                                    this.parentNode.append(clone);
+
+                                    d3_save_svg.save(clone, {
+                                        'filename': "radial-heatmap"
+                                    });
+
+                                    clone.remove();
+                                });
+                            }
+                        });
+                });
+
+                return this;
+            }
+
+            preprocessData(row, index){
+                row["#"] = index;
+                row["Scale"] = row["Scale Category"];
+
+                return row;
+            }
+
+            createGUI(){
+                var filters, sorts,
+                    available_sorts = ["", "Title", "Year"].concat(this._criteria);
+
+                this._gui = new dat.GUI();
+
+                filters = this._gui.addFolder('Filters');
+
+                filters.add(this._filters, "Title").onFinishChange(this.onGUIChange.bind(this));
+                filters.add(this._filters, "Author").onFinishChange(this.onGUIChange.bind(this));
+
+                this._criteria.forEach((criterion) => {
+                    var values = [""].concat(d3.keys(this._opt.criteria[criterion]));
+                    filters.add(this._filters, criterion, values).onFinishChange(this.onGUIChange.bind(this));
+                });
+                //filters.open();
+
+                sorts = this._gui.addFolder('Sorting');
+                d3.keys(this._sorts).forEach((sort) => {
+                    sorts.add(this._sorts, sort, available_sorts).onFinishChange(this.onGUIChange.bind(this));
+                });
+                //sorts.open();
+
+            }
+
+            onGUIChange(){
+                var data = this._data;
+
+                // filter the data
+                var data = data.filter((d) => {
+                    var pass = true;
+
+                    d3.keys(this._filters).forEach((criterion) => {
+                        var value = this._filters[criterion];
+                        console.log(criterion, value);
+                        if(value !== ""){
+                            switch(criterion){
+                                case "Title":
+                                    pass = pass && (d[criterion].toLocaleLowerCase().indexOf(value.toLocaleLowerCase()) >= 0);
+                                    break;
+
+                                case "Author":
+                                    pass = pass && (d["Authors"].toLocaleLowerCase().indexOf(value.toLocaleLowerCase()) >= 0);
+                                    break;
+
+                                default:
+                                    pass = pass && d[criterion] == value;
+                            }
+                        }
+                    });
+
+                    return pass;
+                });
+
+                // sort the data
+                var sortings = d3.values(this._sorts).filter(n => n);
+                data.sort(function(x, y){
+                    var value = 0;
+
+                    sortings.some(function(sort){
+                        value = d3.ascending(x[sort], y[sort]);
+                        return value != 0;
+                    });
+
+                    return value;
+
+                });
+
+                this.update(data);
+            }
+
+            draw(){
+                var graph = this,
+                    arc;
+
+                // create the arc generator
+                graph._arc = d3.arc()
+                    .cornerRadius(graph._opt.cornerRadius)
+                    .padAngle(graph._opt.padAngle);
+
+                // draw the arcs and labels
+                graph._svg.selectAll("g.work")
+                    .data(this._data)
+                    .enter()
+                    .append("g")
+                    .classed("work", true)
+                    .attr("id", function(d){
+                        return "work-"+ d["#"];
+                    })
+                    .style("opacity", 0)
+                    .style("cursor", function(d){
+                        return d["URL"] ? "pointer" : "default";
+                    })
+                    .each(function(row, index, rows){
+                        var g = d3.select(this),
+                            radius = graph._opt.innerRadius,
+                            angle, startAngle, endAngle, midAngle;
+
+                        angle = (Math.PI * 2 / rows.length);
+                        startAngle = index * angle;
+                        endAngle = startAngle + angle;
+                        midAngle = (startAngle + endAngle) / 2;
+
+                        // add colored arcs for the current row
+                        graph._criteria.slice().reverse().forEach((criterion, index) => {
+                            var radiusStep,
+                                color;
+
+                            radiusStep = graph._opt.radiusStep;
+
+                            g.append("path")
+                                .each(function(d){
+                                    this._criterion = criterion;
+                                    this._index = index;
+                                    this._arc_opt = {
+                                        innerRadius: radius + (graph._opt.radiusPad / 2),
+                                        outerRadius: radius + radiusStep - (graph._opt.radiusPad / 2),
+                                        startAngle: startAngle,
+                                        endAngle: endAngle
+                                    };
+                                    this._color = graph._opt.criteria[criterion][d[criterion]];
+                                })
+                                .classed("criterion", true)
+                                .style("fill", function(d){
+                                    return this._color;
+                                })
+                                .style("stroke", function(d){
+                                    return this._color;
+                                })
+                                .style("stroke-width", 1)
+                                .attr("d", function(d){
+                                    return graph._arc(this._arc_opt);
+                                });
+
+                            radius += radiusStep;
+                        });
+
+                        // add the text label
+                        g.append("text")
+                            .text(function(d){
+                                return d["Title"]
+                            })
+                            .each(function(d){
+                                this._radius = radius;
+                            })
+                            .style("font", "12px Arial")
+                            .attr("alignment-baseline", "central")
+                            .style("text-anchor", midAngle > Math.PI ? "end" : "start")
+                            .attr("x", midAngle > Math.PI ? graph._opt.labelOffset * -1 : graph._opt.labelOffset)
+                            .attr("transform", function(d){
+                                var radius = this._radius,
+                                    labelTranslateX = (Math.cos(midAngle - Math.PI / 2) * radius),
+                                    labelTranslateY = Math.sin(midAngle - Math.PI / 2) * radius,
+                                    labelRotation = midAngle > Math.PI ? (midAngle * 180 / Math.PI) - 270 : (midAngle * 180 / Math.PI) - 90;
+
+                                return "translate("+ labelTranslateX +", "+ labelTranslateY +") rotate("+ labelRotation +")";
+                            });
+
+                        // add interactivity
+                        g.on("mouseover", function(){
+                            graph.onMouseOver(this);
+                        })
+                        .on("mouseout", function(){
+                            graph.onMouseOut(this);
+                        })
+                        .on("click", function(){
+                            graph.onItemClick(this);
+                        });
+                });
+
+                graph._svg.selectAll("g.work")
+                    .transition()
+                    .duration(250)
+                    .delay(function(d, i){
+                        return i * 20;
+                    })
+                    .style("opacity", 1);
+            }
+
+            update(data){
+                var graph = this,
+                    works;
+
+                var works = graph._svg.selectAll("g.work")
+                    .datum(function(d){
+                        d._index = data.findIndex((row) => {return row["#"] === d["#"];});
+                        return d;
+                    });
+
+                // hide unwanted rows
+                works.filter(function(d){
+                        return d._index == -1;
+                    })
+                    .classed("hidden", true)
+                    .transition()
+                    .duration(250)
+                    .style("opacity", 0);
+
+                // show and animate wanted rows
+                works.filter(function(d){
+                        return d._index >= 0;
+                    })
+                    .classed("hidden", false)
+                    .each(function(row, index, rows){
+                        var work = d3.select(this),
+                            angle = (Math.PI * 2 / data.length),
+                            startAngle = row._index * angle,
+                            endAngle = startAngle + angle,
+                            midAngle = (startAngle + endAngle) / 2;
+
+                        work.selectAll("path")
+                            .transition()
+                            .duration(500)
+                            .attrTween("d", function(d){
+                                var interpolate;
+
+                                interpolate = d3.interpolate(this._arc_opt, {
+                                    innerRadius: this._arc_opt.innerRadius,
+                                    outerRadius: this._arc_opt.outerRadius,
+                                    startAngle: startAngle,
+                                    endAngle: endAngle
+                                });
+
+                                this._arc_opt = interpolate(0);
+
+                                return function(t){
+                                    return graph._arc(interpolate(t));
+                                };
+                            });
+
+                        work.select("text")
+                            .transition()
+                            .duration(300)
+                            .style("opacity", 0)
+                            .on("end", function(d){
+                                d3.select(this)
+                                    .style("text-anchor", midAngle > Math.PI ? "end" : "start")
+                                    .attr("x", midAngle > Math.PI ? graph._opt.labelOffset * -1 : graph._opt.labelOffset)
+                                    .attr("transform", function(d){
+                                        var radius = this._radius,
+                                            labelTranslateX = (Math.cos(midAngle - Math.PI / 2) * radius),
+                                            labelTranslateY = Math.sin(midAngle - Math.PI / 2) * radius,
+                                            labelRotation = midAngle > Math.PI ? (midAngle * 180 / Math.PI) - 270 : (midAngle * 180 / Math.PI) - 90;
+
+                                        return "translate("+ labelTranslateX +", "+ labelTranslateY +") rotate("+ labelRotation +")";
+                                    })
+                                    .transition()
+                                    .duration(200)
+                                    .style("opacity", 1);
+                            });
+                    })
+                    .transition()
+                    .duration(500)
+                    .style("opacity", 1);
+            }
+
+            onMouseOver(item){
+                var work = d3.select(item),
+                    row = work.datum(),
+                    others = this._svg.selectAll("g.work:not(.hidden):not(#work-"+ row["#"] +")");
+
+                 // update details
+                this._details.select("[data-info='Title']").text(row["Title"]);
+                this._details.select("[data-info='Author']").text(row["Authors"] +" ("+ row["Year"] +")");
+                this._criteria.forEach((criterion) => {
+                    var cValue = row[criterion],
+                        detail = this._details.select("[data-info='Criteria'] [data-info='"+ criterion +"']");
+
+                    detail.select(".color")
+                        .style("background-color", this._opt.criteria[criterion][cValue]);
+
+                    detail.select(".value")
+                        .text(cValue);
+                });
+                this._details.select("[data-info='Link']").text(""+ (row['URL'] ? "Click to visit an online resource" : "No online resource found"));
+                this._details
+                    .interrupt()
+                    .style("opacity", 1);
+
+                // highlight work
+                work
+                    .transition()
+                    .duration(50)
+                    .style("opacity", 1);
+
+                // dim other works
+                others
+                    .transition()
+                    .duration(50)
+                    .style("opacity", 0.5);
+            }
+
+            onMouseOut(item){
+                var work = d3.select(item),
+                    row = work.datum(),
+                    others = this._svg.selectAll("g.work:not(.hidden):not(#work-"+ row["#"] +")");
+
+                // hide details
+                this._details
+                    .transition()
+                    .duration(750)
+                    .style("opacity", 0);
+
+                // reset all works
+                others
+                    .transition()
+                    .duration(750)
+                    .style("opacity", 1);
+            }
+
+            onItemClick(item){
+                var work = d3.select(item),
+                    row = work.datum(),
+                    url = row["URL"];
+
+                if(url){
+                    window.open(url, '_blank');
+                }
+            }
+        };
+
+        var graph = new Graph()
+            .load("works.tsv");
+
+    </script>
+
+</body>
+</html>
